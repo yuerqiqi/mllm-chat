@@ -112,7 +112,11 @@ class ChatViewModel : ViewModel() {
             }
         }
 
-        val modelName = if (AppConfig.useLocalModel) "qwen" else AppConfig.cloudModelName
+        val modelName = if (AppConfig.useLocalModel) {
+            AppConfig.selectedTextModelId ?: "qwen3"
+        } else {
+            AppConfig.cloudModelName
+        }
 
         val jsonBody = JSONObject().apply {
             put("model", modelName)
@@ -144,7 +148,11 @@ class ChatViewModel : ViewModel() {
         }
         messagesArray.put(userContent)
 
-        val modelName = if (AppConfig.useLocalModel) "ocr" else AppConfig.cloudModelName
+        val modelName = if (AppConfig.useLocalModel) {
+            AppConfig.selectedVisionModelId ?: "deepseek_ocr"
+        } else {
+            AppConfig.cloudModelName
+        }
 
         val jsonBody = JSONObject().apply {
             put("model", modelName)

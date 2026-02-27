@@ -58,6 +58,7 @@ import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,6 +68,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -198,6 +200,7 @@ class MainActivity : ComponentActivity() {
                 NavHost(navController = navController, startDestination = "home") {
                     composable("home") { Home(navController) }
                     composable("settings") { SettingsPage(navController) }
+                    composable("models") { ModelManagerPage(navController) }
                     composable(
                         "chat/{id}?type={type}&device={device}",
                         arguments = listOf(
@@ -371,7 +374,9 @@ fun Chat(
     val previewUri by vm.previewUri.observeAsState()
     val context = LocalContext.current
     val scrollState = rememberScrollState()
+    val pageTitle = if (chatType == 1) "Image Reader" else "Chat"
     var useNpu by remember { mutableStateOf(true) }
+    var modelAlertMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(key1 = messages.size) {
         scrollState.animateScrollTo(scrollState.maxValue)
@@ -384,7 +389,7 @@ fun Chat(
         topBar = {
             CenterAlignedTopAppBar(title = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(text = "Chat", fontWeight = FontWeight.Bold, fontSize = 24.sp)
+                    Text(text = pageTitle, fontWeight = FontWeight.Bold, fontSize = 24.sp)
                     if (AppConfig.useLocalModel) {
                         Text(
                             text = if (useNpu) "Powered by NPU" else "Powered by CPU",
@@ -426,6 +431,26 @@ fun Chat(
                 } else {
                     message.copy(type = MessageType.TEXT, content = null)
                 }
+
+                if (AppConfig.useLocalModel) {
+                    val requireVisionModel = chatType == 1
+                    val requiredModelId = if (requireVisionModel) {
+                        AppConfig.selectedVisionModelId
+                    } else {
+                        AppConfig.selectedTextModelId
+                    }
+
+                    if (requiredModelId.isNullOrBlank()) {
+                        modelAlertMessage = "No ${if (requireVisionModel) "multimodal" else "text"} model is selected. Please go to Model Manager to download and select one."
+                        return@ChatInput
+                    }
+
+                    if (!ModelConfig.isModelDownloaded(requiredModelId)) {
+                        modelAlertMessage = "The selected model is not fully downloaded yet. Please complete the download in Model Manager."
+                        return@ChatInput
+                    }
+                }
+
                 vm.sendMessage(context, finalMsg)
                 vm.setPreviewUri(null)
             }
@@ -449,6 +474,30 @@ fun Chat(
             }
             if (previewUri != null) {
                 PreviewBubble(preview = previewUri!!)
+            }
+
+            val alertMessage = modelAlertMessage
+            if (alertMessage != null) {
+                AlertDialog(
+                    onDismissRequest = { modelAlertMessage = null },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                modelAlertMessage = null
+                                navController.navigate("models")
+                            }
+                        ) {
+                            Text("Go to Model Manager")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { modelAlertMessage = null }) {
+                            Text("Cancel")
+                        }
+                    },
+                    title = { Text("Model Not Ready") },
+                    text = { Text(alertMessage) }
+                )
             }
         }
     }
@@ -775,13 +824,17 @@ fun Home(navController: NavController) {
         topBar = {
             Box(modifier = Modifier.fillMaxWidth()) {
                 Greeting("Android")
-                IconButton(
-                    onClick = { navController.navigate("settings") },
+                Row(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(top = 56.dp, end = 8.dp)
                 ) {
-                    Icon(Icons.Rounded.Settings, contentDescription = "Settings")
+                    IconButton(onClick = { navController.navigate("models") }) {
+                        Icon(Icons.Rounded.Build, contentDescription = "Models")
+                    }
+                    IconButton(onClick = { navController.navigate("settings") }) {
+                        Icon(Icons.Rounded.Settings, contentDescription = "Settings")
+                    }
                 }
             }
         }
