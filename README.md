@@ -11,6 +11,16 @@ This version introduces a major architectural refactoring, moving from pure JNI 
 * **Multimodal OCR:** Integrated DeepSeek-OCR support for image-to-text capabilities.
 * **UI Upgrade:** New Settings Page for API keys/mode switching, Markdown rendering optimization, and NPU/CPU visual indicators.
 
+## Quick Start (Prebuilt APK)
+
+For users who want to try the app immediately without building from source code:
+
+1.  Go to the [**Releases Page**](https://github.com/UbiquitousLearning/mllm-chat/releases).
+2.  Download the **`app-debug.apk`** from the latest Pre-release.
+3.  Install the APK on your Android device.
+
+---
+
 ## How to Build
 
 ### 1. Get the Code
@@ -23,8 +33,8 @@ git clone [https://github.com/UbiquitousLearning/mllm-chat.git](https://github.c
 
 Due to GitHub file size limits, the required native libraries (`.so` files) are **not included** in the source code and must be downloaded separately.
 
-1.  Go to the [**Releases Page**](https://www.google.com/search?q=https://github.com/UbiquitousLearning/mllm-chat/releases).
-2.  Download the **`jniLibs.zip`** file from the latest release (v2.0).
+1.  Go to the [**Releases Page**](https://github.com/UbiquitousLearning/mllm-chat/releases).
+2.  Download the **`jniLibs.zip`** file from the latest release (v2.0).(Note: If you are using the prebuilt APK, you can skip this step.)
 3.  Extract the contents into your project directory at the following path:
     `app/src/main/jniLibs/`
 

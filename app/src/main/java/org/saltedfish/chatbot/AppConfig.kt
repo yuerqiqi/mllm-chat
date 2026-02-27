@@ -11,6 +11,8 @@ object AppConfig {
     var apiKey: String = ""
     var cloudApiUrl: String = "https://api.deepseek.com/chat/completions"
     var cloudModelName: String = "deepseek-chat"
+    var selectedTextModelId: String? = null
+    var selectedVisionModelId: String? = null
 
     const val LOCAL_API_URL = "http://127.0.0.1:8080/v1/chat/completions"
 
