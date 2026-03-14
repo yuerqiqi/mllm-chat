@@ -41,7 +41,15 @@ data class ModelItem(
     val capability: ModelCapability,
     val remoteUrl: String,
     val localPath: String,
-    val fileNames: List<String>
+    val fileNames: List<String>,
+    val extraArchives: List<ExtraArchive> = emptyList()
+)
+
+data class ExtraArchive(
+    val displayName: String,
+    val remoteUrl: String,
+    val markerRelativePath: String,
+    val assetPath: String? = null
 )
 
 enum class ModelCapability {
@@ -67,6 +75,14 @@ object ModelConfig {
                 "tokenizer.json",
                 "config.json",
                 "quant_cfg_4B_w4a32_kai.json"
+            ),
+            extraArchives = listOf(
+                ExtraArchive(
+                    displayName = "probes_linear.zip",
+                    remoteUrl = QWEN3_BASE_URL + "probes_linear.zip",
+                    markerRelativePath = "probes_linear",
+                    assetPath = "model/probes_linear.zip"
+                )
             )
         ),
         ModelItem(
@@ -89,7 +105,19 @@ object ModelConfig {
         val dir = File(model.localPath)
         if (!dir.exists() || !dir.isDirectory) return false
         if (model.fileNames.isEmpty()) return false
-        return model.fileNames.all { File(dir, it).exists() }
+        val coreReady = model.fileNames.all { File(dir, it).exists() }
+        if (!coreReady) return false
+
+        for (archive in model.extraArchives) {
+            val marker = File(dir, archive.markerRelativePath)
+            if (!marker.exists()) return false
+            if (marker.isDirectory) {
+                val hasAnyFile = marker.walkTopDown().any { it.isFile }
+                if (!hasAnyFile) return false
+            }
+        }
+
+        return true
     }
 
     fun isModelDownloaded(id: String): Boolean {
@@ -175,6 +203,7 @@ class ModelDownloadManager(
                 onStatus("正在保存 ${model.id}: $fileName ...")
                 saveToTarget(model, tempFile, fileName)
             }
+            downloadExtraArchives(context, model, onProgress, onStatus)
             return
         }
 
@@ -190,6 +219,65 @@ class ModelDownloadManager(
         } else {
             onStatus("正在保存 ${model.id} ...")
             saveToTarget(model, tempFile, model.fileNames.firstOrNull())
+        }
+
+        downloadExtraArchives(context, model, onProgress, onStatus)
+    }
+
+    private fun downloadExtraArchives(
+        context: Context,
+        model: ModelItem,
+        onProgress: (DownloadProgress) -> Unit,
+        onStatus: (String) -> Unit
+    ) {
+        if (model.extraArchives.isEmpty()) return
+
+        for (archive in model.extraArchives) {
+            val marker = File(model.localPath, archive.markerRelativePath)
+            if (marker.exists() && (!marker.isDirectory || marker.walkTopDown().any { it.isFile })) {
+                onStatus("${model.id}: ${archive.displayName} 已存在，跳过")
+                continue
+            }
+
+            if (tryExtractArchiveFromAssets(context, archive, model, onStatus)) {
+                onStatus("正在解压 ${model.id}: ${archive.displayName} (assets) ...")
+                continue
+            }
+
+            if (archive.remoteUrl.isBlank()) {
+                throw IOException("Missing remote URL and assets for ${model.id}: ${archive.displayName}")
+            }
+
+            val tempFile = File(context.cacheDir, "${model.id}-${archive.displayName}.download")
+            onStatus("正在下载 ${model.id}: ${archive.displayName} ...")
+            downloadFile(model.id, archive.displayName, archive.remoteUrl, tempFile, onProgress)
+
+            onStatus("正在解压 ${model.id}: ${archive.displayName} ...")
+            unzipToDirectory(tempFile, File(model.localPath))
+            tempFile.delete()
+        }
+    }
+
+    private fun tryExtractArchiveFromAssets(
+        context: Context,
+        archive: ExtraArchive,
+        model: ModelItem,
+        onStatus: (String) -> Unit
+    ): Boolean {
+        val assetPath = archive.assetPath ?: return false
+        return try {
+            val tempFile = File(context.cacheDir, "${model.id}-${archive.displayName}.asset.download")
+            context.assets.open(assetPath).use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            onStatus("正在解压 ${model.id}: ${archive.displayName} (assets) ...")
+            unzipToDirectory(tempFile, File(model.localPath))
+            tempFile.delete()
+            true
+        } catch (_: IOException) {
+            false
         }
     }
 

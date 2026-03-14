@@ -163,13 +163,18 @@ class ChatViewModel : ViewModel() {
         sendRequest(apiUrl, jsonBody, onUpdate)
     }
 
-    private fun sendRequest(url: String, jsonBody: JSONObject, onUpdate: (String, Boolean) -> Unit) {
+    private fun sendRequest(
+        url: String,
+        jsonBody: JSONObject,
+        onUpdate: (String, Boolean) -> Unit,
+        isCloudOverride: Boolean = false
+    ) {
         val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
         val body = RequestBody.create(mediaType, jsonBody.toString())
 
         val requestBuilder = Request.Builder().url(url).post(body)
 
-        if (!AppConfig.useLocalModel && AppConfig.apiKey.isNotEmpty()) {
+        if ((!AppConfig.useLocalModel || isCloudOverride) && AppConfig.apiKey.isNotEmpty()) {
             requestBuilder.addHeader("Authorization", "Bearer ${AppConfig.apiKey}")
         }
 
@@ -181,11 +186,19 @@ class ChatViewModel : ViewModel() {
                 return
             }
             val source = response.body?.source() ?: return
+            var triggerCloudFallback = false
             while (!source.exhausted()) {
                 val line = source.readUtf8Line() ?: break
                 if (line.startsWith("data: ")) {
                     val data = line.removePrefix("data: ").trim()
                     if (data == "[DONE]") break
+
+                    // Probing service may emit a terminal hallucination event.
+                    if (data.contains("early_exit_hallucination")) {
+                        triggerCloudFallback = AppConfig.useLocalModel && !isCloudOverride
+                        break
+                    }
+
                     try {
                         val json = JSONObject(data)
                         if (json.has("choices")) {
@@ -193,13 +206,38 @@ class ChatViewModel : ViewModel() {
                             if (choices.length() > 0) {
                                 val delta = choices.getJSONObject(0).getJSONObject("delta")
                                 if (delta.has("content")) {
-                                    onUpdate(delta.getString("content"), false)
+                                    val content = delta.getString("content")
+                                    if (content.contains("early_exit_hallucination")) {
+                                        triggerCloudFallback = AppConfig.useLocalModel && !isCloudOverride
+                                        break
+                                    }
+                                    onUpdate(content, false)
                                 }
                             }
                         }
                     } catch (e: Exception) {}
                 }
             }
+
+            if (triggerCloudFallback) {
+                if (AppConfig.cloudApiUrl.isBlank()) {
+                    onUpdate("\n[Local hallucination detected, but cloud URL is empty.]", true)
+                    return
+                }
+                if (AppConfig.apiKey.isBlank()) {
+                    onUpdate("\n[Local hallucination detected, but cloud API key is not configured.]", true)
+                    return
+                }
+
+                // Persist route to cloud until the user manually switches back in Settings.
+                AppConfig.useLocalModel = false
+                onUpdate("\n[Local hallucination detected, switched to cloud (manual switch required to return local).]\n", false)
+                val cloudBody = JSONObject(jsonBody.toString())
+                cloudBody.put("model", AppConfig.cloudModelName)
+                sendRequest(AppConfig.cloudApiUrl, cloudBody, onUpdate, isCloudOverride = true)
+                return
+            }
+
             onUpdate("", true)
         }
     }

@@ -117,7 +117,11 @@ import gomllm.Gomllm
 import kotlinx.coroutines.CoroutineScope
 import org.saltedfish.chatbot.ui.theme.ChatBotTheme
 import org.saltedfish.chatbot.ui.theme.Purple80
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.CountDownLatch
+import java.util.zip.ZipInputStream
 
 fun Context.getActivity(): ComponentActivity? = when (this) {
     is ComponentActivity -> this
@@ -183,6 +187,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        AppConfig.init(this)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (!Environment.isExternalStorageManager()) {
@@ -229,9 +234,17 @@ class MainActivity : ComponentActivity() {
             val ocrPath = "/sdcard/Download/model/deepseek_ocr"
 
             try {
+                if (AppConfig.enableHallucinationDetection) {
+                    ensureBundledProbesReady(qwenPath)
+                }
                 val cacheDir = this.cacheDir.absolutePath
                 android.system.Os.setenv("TMPDIR", cacheDir, true)
-                val status = Gomllm.startServer(qwenPath, ocrPath, cacheDir)
+                val status = Gomllm.startServer(
+                    qwenPath,
+                    ocrPath,
+                    cacheDir,
+                    AppConfig.enableHallucinationDetection
+                )
                 runOnUiThread {
                     Toast.makeText(this, "Engine: $status", Toast.LENGTH_LONG).show()
                 }
@@ -240,12 +253,64 @@ class MainActivity : ComponentActivity() {
             }
         }.start()
     }
+
+    private fun ensureBundledProbesReady(qwenPath: String) {
+        val probesDir = File(qwenPath, "probes_linear")
+        if (probesDir.exists() && probesDir.isDirectory && probesDir.walkTopDown().any { it.isFile }) {
+            return
+        }
+
+        val tmpZip = File(cacheDir, "probes_linear.asset.zip")
+        try {
+            assets.open("model/probes_linear.zip").use { input ->
+                FileOutputStream(tmpZip).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            unzipToDirectory(tmpZip, File(qwenPath))
+        } catch (_: IOException) {
+            // If bundled probes are missing, keep server startup path unchanged.
+        } finally {
+            if (tmpZip.exists()) {
+                tmpZip.delete()
+            }
+        }
+    }
+
+    private fun unzipToDirectory(zipFile: File, destDir: File) {
+        if (!destDir.exists()) {
+            destDir.mkdirs()
+        }
+        val destDirCanonical = destDir.canonicalPath + File.separator
+        ZipInputStream(zipFile.inputStream()).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                val newFile = File(destDir, entry.name)
+                val canonicalPath = newFile.canonicalPath
+                if (!canonicalPath.startsWith(destDirCanonical)) {
+                    throw SecurityException("Zip entry is outside of target dir")
+                }
+                if (entry.isDirectory) {
+                    newFile.mkdirs()
+                } else {
+                    newFile.parentFile?.mkdirs()
+                    FileOutputStream(newFile).use { fos ->
+                        zis.copyTo(fos)
+                    }
+                }
+                zis.closeEntry()
+                entry = zis.nextEntry
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsPage(navController: NavController) {
+    val context = LocalContext.current
     var useLocal by remember { mutableStateOf(AppConfig.useLocalModel) }
+    var enableHallucinationDetection by remember { mutableStateOf(AppConfig.enableHallucinationDetection) }
     var apiKey by remember { mutableStateOf(AppConfig.apiKey) }
     var cloudUrl by remember { mutableStateOf(AppConfig.cloudApiUrl) }
     var cloudModel by remember { mutableStateOf(AppConfig.cloudModelName) }
@@ -296,8 +361,45 @@ fun SettingsPage(navController: NavController) {
                     onCheckedChange = {
                         useLocal = it
                         AppConfig.useLocalModel = it
+                        AppConfig.persist(context)
                     }
                 )
+            }
+
+            if (useLocal) {
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .padding(16.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Enable Hallucination Detection",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            if (enableHallucinationDetection) "Probing session enabled" else "Disabled by default",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = enableHallucinationDetection,
+                        onCheckedChange = {
+                            if (enableHallucinationDetection == it) return@Switch
+                            enableHallucinationDetection = it
+                            AppConfig.enableHallucinationDetection = it
+                            AppConfig.persist(context)
+                            Toast.makeText(context, "Setting saved. Restart app to apply.", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
             }
 
             if (!useLocal) {
